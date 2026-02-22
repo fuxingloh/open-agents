@@ -68,6 +68,11 @@ import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSlashCommands } from "@/hooks/use-slash-commands";
+import {
+  isChatInFlight as isChatInFlightStatus,
+  shouldRefreshAfterReadyTransition,
+  shouldShowThinkingIndicator,
+} from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
 import { streamdownPlugins } from "@/lib/streamdown-config";
@@ -700,22 +705,28 @@ export function SessionChatContent() {
     () => (hasMounted ? messages : initialMessages),
     [hasMounted, messages, initialMessages],
   );
+  const isChatInFlight = isChatInFlightStatus(status);
   const lastMessage = useMemo(
     () => renderMessages[renderMessages.length - 1],
     [renderMessages],
   );
-  const showThinkingIndicator = useMemo(
-    () =>
-      status === "submitted" ||
-      (status === "streaming" &&
-        lastMessage?.role === "assistant" &&
-        !lastMessage.parts.some(
+  const hasAssistantRenderableContent =
+    lastMessage?.role === "assistant"
+      ? lastMessage.parts.some(
           (p) =>
             (p.type === "text" && p.text.length > 0) ||
             isToolUIPart(p) ||
             isReasoningUIPart(p),
-        )),
-    [status, lastMessage],
+        )
+      : false;
+  const showThinkingIndicator = useMemo(
+    () =>
+      shouldShowThinkingIndicator({
+        status,
+        hasAssistantRenderableContent,
+        lastMessageRole: lastMessage?.role,
+      }),
+    [status, hasAssistantRenderableContent, lastMessage?.role],
   );
   const groupedRenderMessages = useMemo<GroupedRenderMessage[]>(() => {
     return renderMessages.map((message, messageIndex) => {
@@ -756,10 +767,10 @@ export function SessionChatContent() {
         message,
         groups,
         isStreaming:
-          status === "streaming" && messageIndex === renderMessages.length - 1,
+          isChatInFlight && messageIndex === renderMessages.length - 1,
       };
     });
-  }, [renderMessages, status]);
+  }, [renderMessages, isChatInFlight]);
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
   const lastStatusSyncAtRef = useRef(0);
   const statusSyncInFlightRef = useRef(false);
@@ -1132,10 +1143,10 @@ export function SessionChatContent() {
   }, [messages, isAtBottom, scrollToBottom]);
 
   useEffect(() => {
-    if (status !== "streaming") {
+    if (!isChatInFlight) {
       inputRef.current?.focus();
     }
-  }, [status]);
+  }, [isChatInFlight]);
 
   // After a chat turn completes, immediately sync status from the server.
   // If the sandbox was hibernated during the turn (tool calls failed), this
@@ -1149,6 +1160,7 @@ export function SessionChatContent() {
   useEffect(() => {
     const prevStatus = prevStatusRef.current;
     const wasStreaming = prevStatus === "streaming";
+    const wasSubmitted = prevStatus === "submitted";
     const becameReady = status === "ready" && prevStatus !== "ready";
     const becameError = status === "error" && prevStatus !== "error";
     const shouldClearStreaming = status === "error" || becameReady;
@@ -1172,10 +1184,23 @@ export function SessionChatContent() {
     if (becameReady) {
       pendingOptimisticTitleChatIdRef.current = null;
     }
-    if (wasStreaming && status === "ready" && isMountedRef.current) {
+    if (
+      (wasStreaming || wasSubmitted) &&
+      status === "ready" &&
+      isMountedRef.current
+    ) {
       void requestStatusSync("force");
       void requestMarkChatRead("force");
       void refreshChats();
+      if (
+        shouldRefreshAfterReadyTransition({
+          prevStatus,
+          status,
+          hasAssistantRenderableContent,
+        })
+      ) {
+        router.refresh();
+      }
     }
   }, [
     status,
@@ -1185,6 +1210,8 @@ export function SessionChatContent() {
     requestStatusSync,
     requestMarkChatRead,
     refreshChats,
+    router,
+    hasAssistantRenderableContent,
   ]);
 
   // Track whether we've auto-attempted sandbox startup for this page load.
@@ -2146,7 +2173,7 @@ export function SessionChatContent() {
                       }
                     }
                   }}
-                  disabled={isArchived || status === "streaming"}
+                  disabled={isArchived || isChatInFlight}
                   className="w-full resize-none overflow-y-auto bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none"
                   style={{ minHeight: "24px" }}
                 />
@@ -2168,7 +2195,7 @@ export function SessionChatContent() {
                   {renderMessages.length === 0 && chatInfo.modelId ? (
                     <div
                       className={
-                        status === "streaming" || isUpdatingModel
+                        isChatInFlight || isUpdatingModel
                           ? "pointer-events-none opacity-60"
                           : undefined
                       }
@@ -2218,7 +2245,7 @@ export function SessionChatContent() {
                     )}
                   </Button>
 
-                  {status === "streaming" ? (
+                  {isChatInFlight ? (
                     <Button
                       type="button"
                       size="icon"
@@ -2241,6 +2268,7 @@ export function SessionChatContent() {
                             size="icon"
                             disabled={
                               isArchived ||
+                              isChatInFlight ||
                               (!input.trim() && images.length === 0) ||
                               isUpdatingModel ||
                               !isSandboxActive
