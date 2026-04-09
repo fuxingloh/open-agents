@@ -1,4 +1,5 @@
-import type { BaseCodeOptions, BaseDiffOptions } from "@pierre/diffs/react";
+import type { BaseCodeOptions } from "@pierre/diffs/react";
+import type { FileDiffOptions } from "@pierre/diffs";
 import "./vercel-themes";
 
 const unsafeCSS = `
@@ -23,19 +24,24 @@ const theme = {
   light: "vercel-light",
 } as const;
 
-export const defaultDiffOptions = {
+/* ------------------------------------------------------------------ */
+/* Exported option presets                                              */
+/* ------------------------------------------------------------------ */
+
+export const defaultDiffOptions: FileDiffOptions<undefined> = {
   theme,
   diffStyle: "unified",
   diffIndicators: "classic",
   overflow: "scroll",
   disableFileHeader: true,
   unsafeCSS,
-} satisfies BaseDiffOptions;
+  hunkSeparators: "line-info",
+};
 
-export const splitDiffOptions = {
+export const splitDiffOptions: FileDiffOptions<undefined> = {
   ...defaultDiffOptions,
   diffStyle: "split",
-} satisfies BaseDiffOptions;
+};
 
 export const defaultFileOptions = {
   theme,

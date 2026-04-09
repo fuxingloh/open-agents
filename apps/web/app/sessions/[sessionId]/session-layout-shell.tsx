@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 import {
@@ -8,6 +8,12 @@ import {
   useSessionChats,
 } from "@/hooks/use-session-chats";
 import type { Session } from "@/lib/db/schema";
+import {
+  GitPanelProvider,
+  useGitPanel,
+} from "./chats/[chatId]/git-panel-context";
+import { SessionHeader } from "./chats/[chatId]/session-header";
+import { ChatTabs } from "./chats/[chatId]/chat-tabs";
 import { SessionLayoutContext } from "./session-layout-context";
 
 type SessionLayoutShellProps = {
@@ -19,12 +25,50 @@ type SessionLayoutShellProps = {
   children: ReactNode;
 };
 
+/**
+ * Inner component that reads panelContent from context and renders
+ * the horizontal split: left column (header + tabs + page) | right panel.
+ */
+function SessionLayoutInner({
+  activeChatId,
+  children,
+}: {
+  activeChatId: string;
+  children: ReactNode;
+}) {
+  const { panelPortalRef, gitPanelOpen } = useGitPanel();
+
+  return (
+    <div className="flex h-full overflow-hidden">
+      {/* Left column: header + tabs + page content */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <SessionHeader />
+        {activeChatId && <ChatTabs activeChatId={activeChatId} />}
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+      </div>
+
+      {/* Portal target for the git panel — reserves space when panel is open
+          so the layout doesn't shift during chat navigation. */}
+      <div
+        ref={panelPortalRef}
+        className={
+          gitPanelOpen
+            ? "flex h-full w-72 shrink-0 flex-col border-l border-border bg-background xl:w-80"
+            : "hidden"
+        }
+      />
+    </div>
+  );
+}
+
 export function SessionLayoutShell({
   session: initialSession,
   initialChatsData,
   children,
 }: SessionLayoutShellProps) {
   const router = useRouter();
+  const params = useParams<{ chatId?: string }>();
+  const activeChatId = params.chatId ?? "";
 
   const sessionId = initialSession.id;
 
@@ -32,6 +76,8 @@ export function SessionLayoutShell({
     chats,
     loading: chatsLoading,
     createChat,
+    deleteChat,
+    renameChat,
   } = useSessionChats(sessionId, { initialData: initialChatsData });
 
   const switchChat = useCallback(
@@ -58,13 +104,27 @@ export function SessionLayoutShell({
       chatsLoading,
       createChat,
       switchChat,
+      deleteChat,
+      renameChat,
     }),
-    [initialSession, chats, chatsLoading, createChat, switchChat],
+    [
+      initialSession,
+      chats,
+      chatsLoading,
+      createChat,
+      switchChat,
+      deleteChat,
+      renameChat,
+    ],
   );
 
   return (
     <SessionLayoutContext.Provider value={layoutContext}>
-      {children}
+      <GitPanelProvider>
+        <SessionLayoutInner activeChatId={activeChatId}>
+          {children}
+        </SessionLayoutInner>
+      </GitPanelProvider>
     </SessionLayoutContext.Provider>
   );
 }
